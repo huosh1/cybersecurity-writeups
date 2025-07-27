@@ -110,7 +110,7 @@ Hydra (https://github.com/vanhauser-thc/thc-hydra) finished at 2025-07-28 01:16:
 then ssh
 LFILE=/root/root.txt
 
-
+look '' "$LFILE"
 
 
 find password in /etc/shadow SHA 51?? , how to dehash, salt ,... to understand
