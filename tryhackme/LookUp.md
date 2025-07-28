@@ -57,13 +57,13 @@ Before launching any brute-force attack, it is important to analyze how the appl
 
 This discrepancy confirmed a *user enumeration vulnerability*. The site was essentially telling an attacker whether a given username was in the database, based on the error message. This kind of behavior is a known flaw in authentication systems – the correct secure practice is to use a generic message for all failures (so as not to divulge which part of the credential was wrong). Here, the distinct messages provided a clear oracle for discovering valid usernames.
 
-**Exploiting username enumeration:** With this knowledge, the approach was to iterate through a list of common or likely usernames and observe which attempts resulted in the “Wrong password” message (indicating the username is real). This could be done manually for a few names, but automation is straightforward. A small Python script or a tool like **Hydra** or **Burp Intruder** can be used. For illustration, a Python snippet was used to test a list of username candidates:
+**Exploiting username enumeration:** With this knowledge, the approach was to iterate through a [list of common or likely usernames](https://github.com/danielmiessler/SecLists/tree/master/Usernames/Names) and observe which attempts resulted in the “Wrong password” message (indicating the username is real). This could be done manually for a few names, but automation is straightforward. A small Python script or a tool like **Hydra** or **Burp Intruder** can be used. For illustration, a Python snippet was used to test a list of username candidates:
 
 ```python
 import requests
 
 url = "http://lookup.thm/login.php"
-for username in open("usernames.txt"):
+for username in open("names.txt"):
     username = username.strip()
     if not username: 
         continue
