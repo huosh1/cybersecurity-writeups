@@ -234,18 +234,27 @@ The immediate plan was to abuse `pwm` to read sensitive files. However, by desig
 
 To test this, the following steps were taken:
 
-* Create a directory, e.g., `/tmp/attacker`, and write a fake script named `id` there. This script could do something nefarious – for instance, output a fake user ID or even launch a root shell. In our case, we want it to output a different username to trick `pwm`. For example, a simple approach: `echo "uid=1001(think) gid=1001(think) groups=1001(think)"`. This mimics the output of `id` but with the username “think” instead of “www-data”. Save this as `/tmp/attacker/id` and give it execute permissions.
-* Modify the PATH so that our `/tmp/attacker` directory comes **before** the standard system directories. For example: `export PATH=/tmp/attacker:$PATH`. This ensures when `pwm` runs and calls `id`, it will find `/tmp/attacker/id` first and execute it, rather than the real `/usr/bin/id`.
+To trick `/usr/sbin/pwm` into thinking we are another user, we create a fake `id` command that outputs a custom identity. We place it in a writable directory like `/tmp/attacker`, and prepend this path to `$PATH` so that our fake `id` is used instead of the real one. At first, simply echoing the string into a file named `id` doesn’t work, because the file isn’t a real script and gets interpreted incorrectly.
+
+To fix this, we must add a shebang (`#!/bin/bash`) at the top of the file. Without it, the system uses `/bin/sh` by default, which doesn't support certain syntax like parentheses, resulting in errors such as `Syntax error: "(" unexpected`. Adding the proper shebang ensures Bash is used, allowing the `echo` to run correctly and making `pwm` believe the current user is `think`.
+
+```
+mkdir /tmp/attacker
+echo '#!/bin/bash' > /tmp/attacker/id
+echo 'echo "uid=1000(think) gid=1000(think) groups=1000(think)"' >> /tmp/attacker/id
+chmod +x /tmp/attacker/id
+export PATH=/tmp/attacker:$PATH
+```
 
 This kind of PATH manipulation is a common **privilege escalation technique** for poorly designed SUID programs. After setting `PATH` accordingly, running `/usr/sbin/pwm` again triggers our fake `id`. Our fake `id` reports the current user as “think”. Now `pwm` will try to open `/home/think/.passwords` (since it takes the username from the id output). Because `pwm` runs as root, it has permission to read that file. And if the file exists and contains data, `pwm` will likely print it.
 
-Indeed, this trick succeeded. The output of `pwm` after this manipulation was no longer “file not found.” Instead, it displayed what appears to be a list of passwords (or one password) for the user *think*. For example, it might have shown a line like:
+Indeed, the trick worked. After hijacking the `id` command, `pwm` no longer returned “file not found”; instead, it revealed what looks like a list of potential passwords associated with the user *think*. You can save this list in a file named `.passwords` on your machine and use Hydra to brute-force SSH access for the user.
 
-```
-think : josemario.AKA(think)
-```
 
-This appears to be a stored password entry – perhaps in the format `username : password`. It suggests that the user “think” had a `.passwords` file listing some credentials, and one of them was “josemario.AKA(think)”. Given the context, this looked very much like the actual password for the user account “think” on the system (the string has the pattern of a complex password and even includes the username as a hint).
+```bash
+hydra -l think -P .passwords ssh://lookup.thm
+> [22][ssh] host: lookup.thm   login: think   password: j********
+```
 
 In summary, by exploiting the SUID `pwm` program’s use of the PATH and external `id` command, we were able to **read another user’s secret file**. This yielded a probable password for the user **`think`**. This is a critical breakthrough, as it provides credentials that can be used to switch user context.
 
@@ -253,7 +262,7 @@ In summary, by exploiting the SUID `pwm` program’s use of the PATH and externa
 
 ## Gaining User Access via SSH
 
-Now armed with the credentials for user “think” (username: `think`, password: `josemario.AKA(think)`), the next step was to **log in via SSH** as that user. The earlier Nmap scan showed that SSH (port 22) was open and likely accessible. Using SSH is preferable to continuing with a limited web shell because SSH provides a full TTY, stable connection, and the user’s normal environment.
+Now armed with the credentials for user “think” (username: `think`, password: `**********`), the next step was to **log in via SSH** as that user. The earlier Nmap scan showed that SSH (port 22) was open and likely accessible. Using SSH is preferable to continuing with a limited web shell because SSH provides a full TTY, stable connection, and the user’s normal environment.
 
 A quick test confirmed that the password was valid for SSH:
 
@@ -262,10 +271,29 @@ ssh think@lookup.thm
 # Prompt appears
 think@lookup.thm's password: ******
 ```
+---
+If, attempting to log in via SSH at this point resulted in an error:
+This error occurs because the SSH client detected that the host key for `lookup.thm` had changed since the last time a connection was made. This is common in CTF environments like TryHackMe, where machines are frequently reset or redeployed, causing their SSH keys to change. To resolve this, the old fingerprint must be removed from the `known_hosts` file:
+
+After clearing the old key, the SSH connection was successful:
+```
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+Host key verification failed.
+```
+```bash
+ssh-keygen -f ~/.ssh/known_hosts -R lookup.thm
+
+ssh think@lookup.thm
+# Prompt appears
+think@lookup.thm's password: ******
+```
+---
 
 After entering the obtained password, we successfully logged in as **think**. Now the session is an interactive Unix shell as user think. This is a higher privilege level than www-data (which was a web service account with limited access). Typically, user accounts like “think” might have more permissions or at least can read user-level files that www-data could not. Often, the goal in these challenges is to then escalate from this user to the ultimate superuser (root).
 
-Immediately after logging in, standard procedures were followed: checking the user’s groups, home directory, and any interesting files. The home directory of `think` might contain flags or clues, but since the ultimate goal is root, the focus was on privilege escalation.
+Immediately after logging in, standard procedures were followed: checking the user’s groups, home directory, and any interesting files. The home directory of `think` might contain flags or clues (`cat user.txt`), but since the ultimate goal is root, the focus was on privilege escalation.
 
 ## Privilege Escalation to Root via Sudo and the `look` Utility
 
@@ -298,13 +326,11 @@ This command runs `look` as root, searching for all lines (prefix `''` matches e
 
 ```bash
 think$ sudo /usr/bin/look '' /etc/shadow > /tmp/shadow_dump
-```
+think$ cat /tmp/shadow_dump
 
-This runs `look` on `/etc/shadow` as root and redirects the full content into a file in `/tmp` (which `think` can then read). Another approach could be to directly view it, but saving to a file was convenient. The `shadow_dump` file now contained lines like:
-
-```
 root:$6$SALTVALUE$HASHEDPASSWORD:19345:0:99999:7:::
-think:$6$... (etc)
+think:$6$Cqt14LKfnwO1hA/a$c/g4M9yiP1KGJtbiOS4zubpw2.sm4bPfCglqddPpUS615xwwsU4eg1q.nr6UDLppea8AlmJ5fQUUewLICNU371:19568:0:99999:7:::
+ubuntu:!etc...
 ```
 
 Each line in `/etc/shadow` corresponds to a user and contains several fields separated by colons. The critical field is the second field – the password hash. For example, for `root` it starts with `$6$`, which indicates the hashing algorithm used is SHA-512. Following that is the “salt” value and then the actual hashed password. Other fields (like `19345:0:99999:7:::`) are password aging and expiration parameters not relevant to the cracking exercise.
@@ -315,19 +341,30 @@ At this point, we already had root-level access to read any file, which is usual
 
 The **`/etc/shadow`** file in Linux stores hashed passwords and related metadata for each user. The format of the hashed password field (the second field) is typically `$<id>$<salt>$<hash>`. The `$<id>$` is a code for the hash algorithm: common values are `$1$` for MD5, `$5$` for SHA-256, `$6$` for SHA-512. In our case, `$6$` was used, meaning the passwords are hashed with the SHA-512 algorithm (which is the default on modern Ubuntu systems). The “salt” is a random string (the portion between the second and third `$`) which is used to randomize the hash output, making precomputed rainbow table attacks less effective. The actual hash follows the salt, until the next colon.
 
+Voici la version réécrite avec ton vrai hash :
+
+---
+
 For example, a shadow entry:
 
 ```
-think:$6$abDef.GH$9Qm...8Hv:18045:0:99999:7:::
+think:$6$Cqt14LKfnwO1hA/a$c/g4M9yiP1KGJtbiOS4zubpw2.sm4bPfCglqddPpUS615xwwsU4eg1q.nr6UDLppea8AlmJ5fQUUewLICNU371:19568:0:99999:7:::
 ```
 
-Here, `think` is the username. The hash part `$6$abDef.GH$9Qm...8Hv` indicates:
+Here, `think` is the username. The hash portion `$6$Cqt14LKfnwO1hA/a$c/g4M9yiP1KGJtbiOS4zubpw2.sm4bPfCglqddPpUS615xwwsU4eg1q.nr6UDLppea8AlmJ5fQUUewLICNU371` contains:
 
 * `$6$` = SHA-512 algorithm
-* Salt = `abDef.GH` (just an example; actual salt can be longer)
-* Hash = `9Qm...8Hv` (truncated here)
+* Salt = `Cqt14LKfnwO1hA/a`
+* Hash = `c/g4M9yiP1KGJtbiOS4zubpw2.sm4bPfCglqddPpUS615xwwsU4eg1q.nr6UDLppea8AlmJ5fQUUewLICNU371`
 
-The rest of the fields (`18045:0:99999:7:::`) indicate last password change date and policy (minimum days, maximum days, warning period, etc.). These are not immediately relevant to the attack except to note if passwords are expired or not.
+The remaining fields (`19568:0:99999:7:::`) describe password aging policies:
+
+* `19568` = last password change (in days since Jan 1, 1970)
+* `0` = minimum days between password changes
+* `99999` = maximum days before password must be changed
+* `7` = number of days before expiration to warn the user
+
+These values are not directly relevant to the attack unless you're targeting password expiration policies or inactive accounts.
 
 To **crack** these hashes (i.e., recover the plaintext passwords), one typically uses tools like **John the Ripper** or **Hashcat**. John the Ripper has a utility called `unshadow` which combines `/etc/passwd` and `/etc/shadow` into a format that John can work with. This combination is needed because `/etc/passwd` contains the usernames and user IDs (which John uses to label cracks) and historically (on very old systems) contained the hashes as well before shadowing was implemented. The `unshadow` command output was created as follows:
 
@@ -371,46 +408,7 @@ This challenge illustrated several important security concepts and common vulner
 
 * **Protection of Password Hashes:** The ability to read `/etc/shadow` is almost equivalent to getting root, given enough time and resources. Even though modern hashing (SHA-512 with salt) is strong, user passwords may still be crackable. The takeaway is that one must prevent attackers from ever reading the shadow file in the first place. That is achieved by ensuring no trivial file-read vulnerability exists and that no user who is not trusted can gain such privileges. Also, using stronger authentication methods (like keys for SSH, two-factor authentication, etc.) can mitigate the impact of a leaked password hash.
 
-* **Post-Exploitation Methodology:** This challenge reinforced the importance of a systematic approach after initial access. Running automated scripts like LinPEAS, checking for SUID/SGID files, enumerating sudo privileges, examining scheduled tasks, and searching for configuration files or credentials are all vital. Many privilege escalation paths are not exploits of kernel bugs but rather logical flaws or oversights (like the ones here). Regular system hardening and audits can catch these (e.g., an unused SUID binary or an overly permissive sudo rule).
-
-## General Methodology Outline for Similar Engagements
-
-The approach taken in this challenge can be generalized to a methodical process useful in many penetration tests or CTF challenges:
-
-1. **Reconnaissance:** Perform network scanning (`nmap`) to identify open ports and services. Enumerate service versions (`-sV`) and default scripts (`-sC`) to gather as much information as possible early. Also, identify any virtual hosts or subdomains (via hints or tools) – add them to `/etc/hosts` to ensure they resolve. Use tools like `whatweb` or `nikto` on web services to identify frameworks or known files.
-
-2. **Web/Application Analysis:** For web services, enumerate directories (using `ffuf`, `gobuster`) and parameters. Observe how the application behaves – especially around login, input forms, file uploads, etc. Test for common vulnerabilities (SQL injection, command injection, file inclusion, etc.). In this case, we identified username enumeration via login errors. Always check authentication flows for information leaks. Also, check for known admin panels (e.g., **phpMyAdmin**, **Adminer**, **elFinder**, etc.) and note their versions for known exploits.
-
-3. **Initial Foothold Exploitation:** Once a potential weakness is found (e.g., a guessed password or an exploit for a known CVE in web software), use it to gain a foothold. If it’s a web exploit, often this means obtaining a reverse shell on the system. Be prepared with a listener (Netcat or Metasploit multi/handler) and use a reliable shell payload. After getting a shell, **stabilize it**: for example, use `python3 -c 'import pty; pty.spawn("/bin/bash")'` to get a pseudo-tty, and `Ctrl-Z` + `stty raw -echo` trick to improve the interactivity in netcat. This makes further actions easier.
-
-4. **Post-Exploitation Enumeration:** Systematically enumerate the compromised machine. Manual checks include:
-
-   * Listing SUID/SGID files (`find / -perm -4000 -type f 2>/dev/null`) to find any unusual ones.
-   * Checking `sudo -l` for possible command executions as other users.
-   * Examining cron jobs (`/etc/crontab`, `/etc/cron.*`) for tasks running as root.
-   * Looking for world-writable files or sensitive files with improper permissions.
-   * Searching for configuration files or scripts that might contain credentials (common places: web config files, database configs, inside home directories).
-   * Using automation (LinPEAS, WinPEAS on Windows, or pspy for monitoring processes) to catch things you might miss.
-
-5. **Privilege Escalation:** After identifying potential vectors, exploit them carefully. For SUID abuses, as shown, sometimes it’s about using the environment (PATH, environment variables, locale, etc.) to subvert what the program does. Other times it could be exploiting a buffer overflow in an SUID binary (more rare in CTF contexts) or abusing intended functionality (like using an SUID `tar` or `vim` from GTFOBins to get a shell). For sudo, if you can run a file editor (like `sudo vi`), it’s game over (since you can escape to shell). If it’s a benign-looking command, think about how it might be repurposed (reading files, writing files, etc., as we did with `look`). Always verify the impact by, for example, reading `/etc/shadow` or creating a root-level shell if possible.
-
-6. **Covering Tracks / Persistence (if applicable):** In a real engagement, one would consider cleaning up any dropped files or shells, and possibly adding a backdoor for persistence (like adding an SSH key to root’s `authorized_keys`). In CTFs, this is usually not needed (and often not allowed). Instead, document everything thoroughly. Ensure all flags or objectives are collected.
-
-7. **Cleanup:** Particularly in shared labs or CTFs, it’s polite to restore any changes that could affect other players (for instance, removing the fake `id` in /tmp, or not leaving your listener running on the victim). On real engagements, covering tracks might involve clearing logs.
-
-This structured approach ensures no major step is skipped, and that one uses both manual intuition and automated tools to find vulnerabilities.
-
 ## Conclusion
 
 In this walkthrough of the TryHackMe "Lookup" challenge, we saw how a combination of minor weaknesses could be chained to compromise a system fully. A seemingly harmless misconfiguration (detailed error messages on login) provided the first foothold by revealing a valid username. Weak password practices then allowed access to a web portal. An outdated third-party component (elFinder 2.1.47) with a known exploit granted remote code execution on the server. From there, classic privilege escalation techniques took over: enumerating for SUID binaries and sudo privileges. The custom `pwm` SUID program was exploited via PATH hijacking to disclose a user's password, and sudo rights on the `look` utility were abused to read protected files, including credentials and system secrets. Each step required understanding the underlying technology – whether it was Linux name resolution, web authentication logic, or OS permission mechanisms – and exploiting it in an unintended way.
 
-The challenge underscores the importance of defense in depth: even if one layer (e.g., the web app) is compromised, proper hardening (no unusual SUID files, no unnecessary sudo permissions, strong passwords, etc.) can contain the damage. Conversely, from an attacker’s perspective, it demonstrates how persistence and systematic probing of a target can eventually reveal a weakness. By approaching the target methodically, we ensured that no avenue (network service, web vulnerability, local exploit) was left unchecked.
-
-In an academic context, this case study serves as a comprehensive example of a multi-step attack, touching on a broad range of topics: networking, web security, system internals, and cryptography. Each technical finding was examined in depth:
-
-* How DNS and hosts files work in Linux,
-* How web applications can inadvertently leak information,
-* How known CVEs are applied to exploit real systems,
-* How Unix privilege controls (SUID, sudo) can be bypassed if misconfigured.
-
-By preserving the narrative of the attacker’s journey and simultaneously explaining the technical details of each exploit, this write-up bridges practical pentesting and theoretical understanding. It highlights not just **what** was done, but **how** and **why** each step was possible, which is crucial for both attackers (to refine their methods) and defenders (to strengthen their systems).
