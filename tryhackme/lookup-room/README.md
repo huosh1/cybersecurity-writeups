@@ -1,5 +1,3 @@
-
-
 1. **Add hosts** → `lookup.thm`, `files.lookup.thm`.
 2. **Recon** → `nmap` shows **SSH (22)** and **Apache (80)**.
 3. **Web login** → **username enumeration** via error messages → found a valid username.
@@ -412,3 +410,13 @@ This challenge illustrated several important security concepts and common vulner
 ## Conclusion
 
 In this walkthrough of the TryHackMe "Lookup" challenge, we saw how a combination of minor weaknesses could be chained to compromise a system fully. A seemingly harmless misconfiguration (detailed error messages on login) provided the first foothold by revealing a valid username. Weak password practices then allowed access to a web portal. An outdated third-party component (elFinder 2.1.47) with a known exploit granted remote code execution on the server. From there, classic privilege escalation techniques took over: enumerating for SUID binaries and sudo privileges. The custom `pwm` SUID program was exploited via PATH hijacking to disclose a user's password, and sudo rights on the `look` utility were abused to read protected files, including credentials and system secrets. Each step required understanding the underlying technology – whether it was Linux name resolution, web authentication logic, or OS permission mechanisms – and exploiting it in an unintended way.
+
+* [elFinder RCE - CVE-2019-9194 (secsignal.org)](https://www.secsignal.org/news/cve-2019-9194-elfinder-rce/)
+* [elFinder GitHub - Studio-42](https://github.com/Studio-42/elFinder)
+* [xxd - Manual Page](https://man7.org/linux/man-pages/man1/xxd.1.html)
+* [Reverse Shell Cheat Sheet (revshells.com)](https://revshells.com/)
+* [Hydra - THC GitHub Repository](https://github.com/vanhauser-thc/thc-hydra)
+* [John the Ripper - Official Site](https://www.openwall.com/john/)
+* [linPEAS - PEASS-ng GitHub](https://github.com/carlospolop/PEASS-ng)
+* [/etc/shadow Format - man7.org](https://man7.org/linux/man-pages/man5/shadow.5.html)
+* [unshadow Utility - John Documentation](https://www.openwall.com/john/doc/UNSHADOW.shtml)
