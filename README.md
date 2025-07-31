@@ -23,13 +23,6 @@ The goal is to **share techniques, tools, and thought processes** for offensive 
 - **`/labs/`** → Personal or custom CTF environments.
 - **`/cheatsheets/`** → Quick notes on tools and techniques.
 
-
-## **Disclaimer**
-
-These write-ups are for **educational purposes only**.  
-For HTB, only **retired machines** are documented, respecting the platform rules.
-
-
 ## **Stats**
 
 [![Stars](https://img.shields.io/github/stars/huosh1/cybersecurity-writeups?style=for-the-badge&logo=github&label=Stars)](https://github.com/huosh1/cybersecurity-writeups/stargazers)
